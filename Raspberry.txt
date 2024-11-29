@@ -1,0 +1,55 @@
+import numpy as np
+from tensorflow.keras.models import load_model
+from sklearn.preprocessing import MinMaxScaler
+import time
+
+# Carregar o modelo treinado
+autoencoder = load_model('autoencoder_model.keras')
+
+# Simulação de valores recebidos do Raspberry
+def get_real_time_data():
+    # Aqui você deve implementar a coleta real de dados
+    # Por exemplo, substitua pelos valores coletados do hardware
+    return {
+        "Engine_speed": np.random.uniform(500, 3000),
+        "Engine_torque": np.random.uniform(0, 100),
+        "Flywheel_torque": np.random.uniform(-50, 200),
+        "Throttle_position_signal": np.random.uniform(5, 100),
+        "Vehicle_speed": np.random.uniform(0, 100)
+    }
+
+# Normalizador previamente ajustado
+scaler = MinMaxScaler(feature_range=(0, 1))
+
+# Threshold previamente definido
+threshold = 0.02  # Ajustar de acordo com o treinamento
+
+print("Iniciando monitoramento em tempo real...")
+
+while True:
+    try:
+        # Obter dados em tempo real
+        real_time_data = get_real_time_data()
+        
+        # Converter para array e normalizar
+        input_data = np.array([[real_time_data[col] for col in real_time_data]])
+        input_data_normalized = scaler.transform(input_data)
+        
+        # Reconstruir os dados usando o Autoencoder
+        reconstructed = autoencoder.predict(input_data_normalized)
+        
+        # Calcular erro de reconstrução
+        reconstruction_error = np.mean(np.power(input_data_normalized - reconstructed, 2))
+        
+        # Verificar se é uma anomalia
+        if reconstruction_error > threshold:
+            print(f"Anomalia detectada! Erro: {reconstruction_error:.4f} | Dados: {real_time_data}")
+        else:
+            print(f"Normal. Erro: {reconstruction_error:.4f} | Dados: {real_time_data}")
+        
+        # Intervalo entre leituras (ajuste conforme necessário)
+        time.sleep(1)
+    
+    except KeyboardInterrupt:
+        print("\nMonitoramento interrompido pelo usuário.")
+        break
