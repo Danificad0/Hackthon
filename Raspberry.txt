@@ -1,55 +1,66 @@
+import RPi.GPIO as GPIO
+import time
+import can
 import numpy as np
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
-import time
 
-# Carregar o modelo treinado
+# Configuração do GPIO
+INI1 = 23
+INI2 = 24
+PWM1 = 18
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(INI1, GPIO.OUT)
+GPIO.setup(INI2, GPIO.OUT)
+GPIO.setup(PWM1, GPIO.OUT)
+pwm = GPIO.PWM(PWM1, 1000)
+pwm.start(0)
+
+# Carregar modelo treinado
 autoencoder = load_model('autoencoder_model.keras')
 
-# Simulação de valores recebidos do Raspberry
-def get_real_time_data():
-    # Aqui você deve implementar a coleta real de dados
-    # Por exemplo, substitua pelos valores coletados do hardware
-    return {
-        "Engine_speed": np.random.uniform(500, 3000),
-        "Engine_torque": np.random.uniform(0, 100),
-        "Flywheel_torque": np.random.uniform(-50, 200),
-        "Throttle_position_signal": np.random.uniform(5, 100),
-        "Vehicle_speed": np.random.uniform(0, 100)
-    }
-
-# Normalizador previamente ajustado
+# Configuração do scaler (usar os mesmos parâmetros do treinamento)
 scaler = MinMaxScaler(feature_range=(0, 1))
 
-# Threshold previamente definido
-threshold = 0.02  # Ajustar de acordo com o treinamento
+# Variáveis globais
+Engine_speed = 0
+Engine_torque = 0
+Flywheel_torque = 0
+Throttle_position_signal = 0
+Vehicle_speed = 0
 
-print("Iniciando monitoramento em tempo real...")
-
-while True:
-    try:
-        # Obter dados em tempo real
-        real_time_data = get_real_time_data()
-        
-        # Converter para array e normalizar
-        input_data = np.array([[real_time_data[col] for col in real_time_data]])
-        input_data_normalized = scaler.transform(input_data)
-        
-        # Reconstruir os dados usando o Autoencoder
-        reconstructed = autoencoder.predict(input_data_normalized)
-        
-        # Calcular erro de reconstrução
-        reconstruction_error = np.mean(np.power(input_data_normalized - reconstructed, 2))
-        
-        # Verificar se é uma anomalia
-        if reconstruction_error > threshold:
-            print(f"Anomalia detectada! Erro: {reconstruction_error:.4f} | Dados: {real_time_data}")
-        else:
-            print(f"Normal. Erro: {reconstruction_error:.4f} | Dados: {real_time_data}")
-        
-        # Intervalo entre leituras (ajuste conforme necessário)
-        time.sleep(1)
+# Função para receber mensagens do CAN
+def message_receive(msg):
+    global Engine_speed, Engine_torque, Flywheel_torque, Throttle_position_signal, Vehicle_speed
     
-    except KeyboardInterrupt:
-        print("\nMonitoramento interrompido pelo usuário.")
-        break
+    if msg.arbitration_id == 0x70:  # ID do CAN
+        Engine_speed = msg.data[0] << 8 | msg.data[1]
+        Engine_torque = msg.data[2]
+        Flywheel_torque = msg.data[3]
+        Throttle_position_signal = msg.data[4]
+        Vehicle_speed = msg.data[5]
+
+        # Preprocessar os dados para inferência
+        input_data = np.array([[Engine_speed, Engine_torque, Flywheel_torque, Throttle_position_signal, Vehicle_speed]])
+        input_scaled = scaler.transform(input_data)
+
+        # Fazer a predição com o Autoencoder
+        reconstructed = autoencoder.predict(input_scaled)
+        reconstruction_error = np.mean((input_scaled - reconstructed) ** 2)
+
+        # Determinar se é uma anomalia
+        if reconstruction_error > 0.02: 
+            print("Anomalia detectada!")
+        else:
+            print("Dados normais.")
+
+# Configuração do CAN bus
+bus = can.interface.Bus('can0', bustype='socketcan', bitrate=500000)
+notifier = can.Notifier(bus, [message_receive])
+
+try:
+    while True:
+        time.sleep(1)
+except KeyboardInterrupt:
+    pwm.stop()
+    GPIO.cleanup()
