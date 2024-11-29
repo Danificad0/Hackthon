@@ -49,7 +49,7 @@ def message_receive(msg):
         reconstruction_error = np.mean((input_scaled - reconstructed) ** 2)
 
         # Determinar se é uma anomalia
-        if reconstruction_error > 0.02: 
+        if reconstruction_error > 0.075: 
             print("Anomalia detectada!")
         else:
             print("Dados normais.")
